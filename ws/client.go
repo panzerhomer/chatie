@@ -1,4 +1,4 @@
-package main
+package ws
 
 import (
 	"encoding/json"
@@ -54,14 +54,25 @@ func (client *Client) GetName() string {
 	return client.Name
 }
 
-// func (client *Client) disconnect() {
-// 	client.connection.Close()
-// 	close(client.send)
-// }
+func (client *Client) isInRoom(room *Room) bool {
+	if _, ok := client.rooms[room]; ok {
+		return true
+	}
+	return false
+}
+
+func (client *Client) disconnect() {
+	client.server.unregister <- client
+	for room := range client.rooms {
+		room.unregister <- client
+	}
+	close(client.send)
+	client.connection.Close()
+}
 
 func (client *Client) readPump() {
 	defer func() {
-		client.server.unregisterClient(client)
+		client.disconnect()
 	}()
 
 	client.connection.SetReadLimit(maxMessageSize)
@@ -84,14 +95,12 @@ func (client *Client) readPump() {
 			log.Printf("error marshalling message: %v", err)
 			break
 		}
-		// ff := ReceivedMessage{}
-		// tjson := json.Unmarshal(incomingEvent.Payload, &ff)
+
 		log.Println("[client incomEvent]", incomingEvent.Type, incomingEvent.Payload)
 
 		if err := client.server.handleNewMessage(client, &incomingEvent); err != nil {
 			log.Println("error handeling message: ", err)
 		}
-
 		// client.server.broadcast <- payload
 	}
 }
@@ -100,9 +109,7 @@ func (client *Client) writePump() {
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
 		ticker.Stop()
-		client.server.unregisterClient(client)
-		// client.connection.Close()
-		// client.disconnect()
+		client.disconnect()
 	}()
 
 	for {

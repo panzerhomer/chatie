@@ -1,4 +1,4 @@
-package main
+package ws
 
 import (
 	"fmt"
@@ -10,33 +10,33 @@ import (
 type Room struct {
 	sync.RWMutex
 	ID         uuid.UUID `json:"id"`
-	name       string
+	Name       string    `json:"name"`
+	Private    bool      `json:"private"`
 	clients    map[*Client]bool
 	register   chan *Client
 	unregister chan *Client
 	broadcast  chan *Event
-	private    bool
 }
 
-func NewRoom(name string) *Room {
+func NewRoom(name string, private bool) *Room {
 	return &Room{
 		ID:         uuid.New(),
-		name:       name,
+		Name:       name,
+		Private:    private,
 		clients:    make(map[*Client]bool),
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
 		broadcast:  make(chan *Event),
-		private:    false,
 	}
 }
 
 func (room *Room) notifyClientJoined(client *Client) {
-	const welcomeMessage = "%s joined the room"
+	const welcomeMessage = "%s joined the room\n"
 	room.broadcastToClientsInRoom([]byte(fmt.Sprintf(welcomeMessage, client.ID)))
 }
 
 func (room *Room) notifyClientLeaved(client *Client) {
-	const leaveMessage = "%s leaved the room"
+	const leaveMessage = "%s leaved the room\n"
 	room.broadcastToClientsInRoom([]byte(fmt.Sprintf(leaveMessage, client.ID)))
 }
 
@@ -57,7 +57,10 @@ func (room *Room) registerClientInRoom(client *Client) {
 	room.Lock()
 	defer room.Unlock()
 
-	room.notifyClientJoined(client)
+	if !room.Private {
+		room.notifyClientJoined(client)
+	}
+	// room.notifyClientJoined(client)
 
 	room.clients[client] = true
 }
@@ -82,5 +85,5 @@ func (room *Room) GetID() string {
 }
 
 func (room *Room) GetName() string {
-	return room.name
+	return room.Name
 }
