@@ -1,7 +1,3 @@
-// Copyright 2013 The Gorilla WebSocket Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
-
 package main
 
 import (
@@ -15,7 +11,7 @@ import (
 	"time"
 )
 
-var addr = flag.String("addr", ":8080", "http service address")
+var addr = flag.String("addr", ":8080", "")
 
 func main() {
 	flag.Parse()
@@ -24,18 +20,23 @@ func main() {
 	db := sqlite.InitDB()
 	defer db.Close()
 
-	roomRepo := repository.NewRoomRepository(db)
+	roomRepo := repository.NewChatRepository(db)
 	userRepo := repository.NewUserRepository(db)
 
 	hub := ws.NewWsServer(redis, roomRepo, userRepo)
 	go hub.Run()
+
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		ws.ServeHTTP(hub, w, r)
 	})
+
 	server := &http.Server{
 		Addr:              *addr,
-		ReadHeaderTimeout: 3 * time.Second,
+		ReadHeaderTimeout: 2 * time.Second,
 	}
+
+	log.Println("server is running")
+
 	if err := server.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}

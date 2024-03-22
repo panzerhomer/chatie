@@ -13,26 +13,26 @@ import (
 var ctx = context.Background()
 
 type WsServer struct {
-	clients    map[*Client]bool
-	rooms      map[*Room]bool
-	broadcast  chan []byte
-	register   chan *Client
-	unregister chan *Client
-	users      map[*models.User]bool
-	sync.RWMutex
+	clients        map[*Client]bool
+	chats          map[*Chat]bool
+	broadcast      chan []byte
+	register       chan *Client
+	unregister     chan *Client
+	users          map[*models.User]bool
 	redis          *redis.Client
-	roomRepository repository.RoomRepository
+	chatRepository repository.ChatRepository
 	userRepository repository.UserRepository
+	sync.RWMutex
 }
 
-func NewWsServer(redis *redis.Client, roomRepository repository.RoomRepository, userRepository repository.UserRepository) *WsServer {
+func NewWsServer(redis *redis.Client, chatRepository repository.ChatRepository, userRepository repository.UserRepository) *WsServer {
 	wsServer := &WsServer{
 		clients:    make(map[*Client]bool),
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
-		rooms:      make(map[*Room]bool),
+		chats:      make(map[*Chat]bool),
 		// users:          make(map[*models.User]bool),
-		roomRepository: roomRepository,
+		chatRepository: chatRepository,
 		userRepository: userRepository,
 		redis:          redis,
 	}
@@ -75,9 +75,7 @@ func (server *WsServer) registerClient(client *Client) {
 
 	newUser := clientToUser(client)
 	server.userRepository.AddUser(ctx, newUser)
-
 	server.clients[client] = true
-
 	server.users[newUser] = true
 }
 
@@ -88,7 +86,6 @@ func (server *WsServer) unregisterClient(client *Client) {
 	deleteUser := clientToUser(client)
 	server.userRepository.RemoveUser(ctx, deleteUser)
 	delete(server.users, deleteUser)
-
 	delete(server.clients, client)
 }
 
@@ -115,65 +112,60 @@ func (server *WsServer) showOnlineClients(client *Client) {
 	}
 }
 
-func (server *WsServer) findRoomByName(name string) *Room {
+func (server *WsServer) findChatByName(name string) *Chat {
 	server.Lock()
 	defer server.Unlock()
 
-	var room *Room
-	for r := range server.rooms {
-		if r.GetName() == name {
-			room = r
+	var chat *Chat
+	for c := range server.chats {
+		if c.GetName() == name {
+			chat = c
 			break
 		}
 	}
 
-	if room == nil {
-		room = server.runRoomFromRepository(name)
+	if chat == nil {
+		chat = server.runChatFromRepository(name)
 	}
 
-	return room
+	return chat
 }
 
-func (server *WsServer) createRoom(name string, private bool) *Room {
+func (server *WsServer) createChat(name string, private bool) *Chat {
 	server.Lock()
 	defer server.Unlock()
 
-	room := NewRoom(name, private)
-	go room.Run()
-	server.rooms[room] = true
+	chat := NewChat(name, private)
+	go chat.Run()
+	server.chats[chat] = true
 
-	return room
+	return chat
 }
 
-func (server *WsServer) runRoomFromRepository(name string) *Room {
-	// server.Lock()
-	// defer server.Unlock()
-
-	var room *Room
-	repoRoom, _ := server.roomRepository.GetRoomByName(ctx, name)
-	if repoRoom != nil {
-		room = NewRoom(repoRoom.GetName(), repoRoom.GetPrivate())
-		room.ID, _ = uuid.Parse(repoRoom.GetId())
-		go room.Run()
-		server.rooms[room] = true
+func (server *WsServer) runChatFromRepository(name string) *Chat {
+	var chat *Chat
+	repoChat, _ := server.chatRepository.GetChatByName(ctx, name)
+	if repoChat != nil {
+		chat = NewChat(repoChat.GetName(), repoChat.GetPrivate())
+		chat.ID, _ = uuid.Parse(repoChat.GetId())
+		go chat.Run()
+		server.chats[chat] = true
 	}
-
-	return room
+	return chat
 }
 
-func (server *WsServer) findRoomByID(ID string) *Room {
+func (server *WsServer) findChatByID(ID string) *Chat {
 	server.RLock()
 	defer server.RUnlock()
 
-	var room *Room
-	for r := range server.rooms {
-		if r.GetId() == ID {
-			room = r
+	var chat *Chat
+	for c := range server.chats {
+		if c.GetId() == ID {
+			chat = c
 			break
 		}
 	}
-
-	return room
+	return chat
 }
 
 func (server *WsServer) findClientByName(name string) *Client {
@@ -187,7 +179,6 @@ func (server *WsServer) findClientByName(name string) *Client {
 			break
 		}
 	}
-
 	return client
 }
 
@@ -202,6 +193,5 @@ func (server *WsServer) findClientByID(ID string) *Client {
 			break
 		}
 	}
-
 	return client
 }

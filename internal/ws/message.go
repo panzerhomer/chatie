@@ -7,24 +7,24 @@ import (
 )
 
 const (
-	RoomJoinedEvent = "room-joined"
+	ChatJoinedEvent = "chat-joined"
 	UserLeftEvent   = "user-left"
 	UserJoinedEvent = "user-join"
 )
 
 const SendMessageEvent = "send-message"
-const JoinRoomEvent = "join-room"
-const LeaveRoomEvent = "leave-room"
-const JoinRoomPrivateEvent = "join-room-private"
+const JoinChatEvent = "join-chat"
+const LeaveChatEvent = "leave-chat"
+const JoinChatPrivateEvent = "join-chat-private"
 
 type Event struct {
 	Type    string     `json:"type"`
 	Payload *WsMessage `json:"payload"`
 }
 
-// message from a client
+// message from client
 type WsMessage struct {
-	Room    *Room  `json:"room"`
+	Chat    *Chat  `json:"chat"`
 	Message string `json:"message"`
 	// From    *Client `json:"from"`
 	// To      *Client `json:"to"`

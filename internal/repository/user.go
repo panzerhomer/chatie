@@ -7,10 +7,10 @@ import (
 )
 
 type UserRepository interface {
-	AddUser(_ context.Context, user *models.User) error
-	RemoveUser(_ context.Context, user *models.User) error
-	FindUserById(_ context.Context, ID string) (*models.User, error)
-	GetAllUsers(_ context.Context) ([]models.User, error)
+	AddUser(ctx context.Context, user *models.User) error
+	RemoveUser(ctx context.Context, user *models.User) error
+	FindUserById(ctx context.Context, userID string) (*models.User, error)
+	GetAllUsers(ctx context.Context) ([]models.User, error)
 }
 
 type userRepo struct {
@@ -21,7 +21,7 @@ func NewUserRepository(db *sql.DB) UserRepository {
 	return &userRepo{db}
 }
 
-func (repo *userRepo) AddUser(_ context.Context, user *models.User) error {
+func (repo *userRepo) AddUser(ctx context.Context, user *models.User) error {
 	query, err := repo.db.Prepare("INSERT INTO user(id, name) values(?,?)")
 	if err != nil {
 		return err
@@ -35,7 +35,7 @@ func (repo *userRepo) AddUser(_ context.Context, user *models.User) error {
 	return nil
 }
 
-func (repo *userRepo) RemoveUser(_ context.Context, user *models.User) error {
+func (repo *userRepo) RemoveUser(ctx context.Context, user *models.User) error {
 	stmt, err := repo.db.Prepare("DELETE FROM user WHERE id = ?")
 	if err != nil {
 		return err
@@ -49,8 +49,8 @@ func (repo *userRepo) RemoveUser(_ context.Context, user *models.User) error {
 	return nil
 }
 
-func (repo *userRepo) FindUserById(_ context.Context, ID string) (*models.User, error) {
-	row := repo.db.QueryRow("SELECT id, name FROM user where id = ? LIMIT 1", ID)
+func (repo *userRepo) FindUserById(ctx context.Context, userID string) (*models.User, error) {
+	row := repo.db.QueryRow("SELECT id, name FROM user where id = ? LIMIT 1", userID)
 
 	var user models.User
 
@@ -60,11 +60,11 @@ func (repo *userRepo) FindUserById(_ context.Context, ID string) (*models.User, 
 		}
 		return nil, err
 	}
-	return &user, nil
 
+	return &user, nil
 }
 
-func (repo *userRepo) GetAllUsers(_ context.Context) ([]models.User, error) {
+func (repo *userRepo) GetAllUsers(ctx context.Context) ([]models.User, error) {
 	rows, err := repo.db.Query("SELECT id, name FROM user")
 	if err != nil {
 		return nil, err
@@ -83,5 +83,6 @@ func (repo *userRepo) GetAllUsers(_ context.Context) ([]models.User, error) {
 	if err = rows.Err(); err != nil {
 		return users, err
 	}
+
 	return users, nil
 }

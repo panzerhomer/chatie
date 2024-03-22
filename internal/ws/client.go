@@ -12,13 +12,9 @@ import (
 )
 
 const (
-	// Time allowed to write a message to the peer.
-	writeWait = 10 * time.Second
-	// Time allowed to read the next pong message from the peer.
-	pongWait = 60 * time.Second
-	// Send pings to peer with this period. Must be less than pongWait.
-	pingPeriod = (pongWait * 9) / 10
-	// Maximum message size allowed from peer.
+	writeWait      = 10 * time.Second
+	pongWait       = 60 * time.Second
+	pingPeriod     = (pongWait * 9) / 10
 	maxMessageSize = 512
 )
 
@@ -33,12 +29,12 @@ var upgrader = websocket.Upgrader{
 }
 
 type Client struct {
+	ID     uuid.UUID `json:"id"`
+	Name   string    `json:"name"`
 	server *WsServer
 	conn   *websocket.Conn
 	send   chan []byte
-	ID     uuid.UUID `json:"id"`
-	Name   string    `json:"name"`
-	rooms  map[*Room]bool
+	Chats  map[*Chat]bool
 	sync.RWMutex
 }
 
@@ -49,15 +45,15 @@ func newClient(conn *websocket.Conn, wsServer *WsServer, name string) *Client {
 		conn:   conn,
 		server: wsServer,
 		send:   make(chan []byte, maxMessageSize),
-		rooms:  make(map[*Room]bool),
+		Chats:  make(map[*Chat]bool),
 	}
 
 }
 
 func (c *Client) disconnect() {
 	c.server.unregister <- c
-	for room := range c.rooms {
-		room.unregister <- c
+	for Chat := range c.Chats {
+		Chat.unregister <- c
 	}
 	close(c.send)
 	c.conn.Close()
@@ -75,8 +71,6 @@ func (c *Client) readPump() {
 	c.conn.SetReadDeadline(time.Now().Add(pongWait))
 	c.conn.SetPongHandler(func(string) error { c.conn.SetReadDeadline(time.Now().Add(pongWait)); return nil })
 	for {
-		log.Println("[readPump clicked by] ", c.Name)
-
 		_, payload, err := c.conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
@@ -86,7 +80,6 @@ func (c *Client) readPump() {
 		}
 
 		c.handleNewMessage(payload)
-		// c.server.broadcast <- payload
 	}
 }
 
@@ -99,11 +92,8 @@ func (c *Client) writePump() {
 	for {
 		select {
 		case message, ok := <-c.send:
-			log.Println("[writePump clicked by] ", c.Name)
-
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if !ok {
-				// The hub closed the channel.
 				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
@@ -114,7 +104,6 @@ func (c *Client) writePump() {
 			}
 			w.Write(message)
 
-			// Add queued chat messages to the current websocket message.
 			n := len(c.send)
 			for i := 0; i < n; i++ {
 				w.Write(newline)
@@ -161,6 +150,8 @@ func (client *Client) handleNewMessage(jsonMessage []byte) {
 		return
 	}
 
+	log.Println("[handleNewMessage]", event.Type, event.Payload)
+
 	if event.Payload == nil {
 		return
 	}
@@ -171,83 +162,82 @@ func (client *Client) handleNewMessage(jsonMessage []byte) {
 	switch event.Type {
 	case SendMessageEvent:
 		client.handleSendMessage(event)
-	case JoinRoomEvent:
-		client.handleJoinRoomMessage(event)
-	case LeaveRoomEvent:
-		client.handleLeaveRoomMessage(event)
-	case JoinRoomPrivateEvent:
-		client.handleJoinRoomPrivateMessage(event)
+	case JoinChatEvent:
+		client.handleJoinChatMessage(event)
+	case LeaveChatEvent:
+		client.handleLeaveChatMessage(event)
+	case JoinChatPrivateEvent:
+		client.handleJoinChatPrivateMessage(event)
+	default:
+		client.conn.WriteJSON("wrong event")
 	}
 }
 
 func (client *Client) handleSendMessage(event Event) {
-	roomID := event.Payload.Room.Name
-	if room := client.server.findRoomByName(roomID); room != nil {
-		if client.isInRoom(room) {
-			room.broadcast <- &event
+	сhat := event.Payload.Chat.Name
+	if chat := client.server.findChatByName(сhat); chat != nil {
+		if client.isInChat(chat) {
+			chat.broadcast <- &event
 		}
 	}
 }
 
-func (client *Client) handleJoinRoomMessage(event Event) {
-	roomName := event.Payload.Room.GetName()
+func (client *Client) handleJoinChatMessage(event Event) {
+	chatName := event.Payload.Chat.GetName()
 
-	client.joinRoom(roomName, nil)
+	client.joinChat(chatName, nil)
 }
 
-func (client *Client) handleLeaveRoomMessage(event Event) {
-	room := client.server.findRoomByName(event.Payload.Room.Name)
-	if room == nil {
+func (client *Client) handleLeaveChatMessage(event Event) {
+	сhat := client.server.findChatByName(event.Payload.Chat.Name)
+	if сhat == nil {
 		return
 	}
 
-	delete(client.rooms, room)
+	delete(client.Chats, сhat)
 
-	room.unregister <- client
+	сhat.unregister <- client
 }
 
-func (client *Client) handleJoinRoomPrivateMessage(message Event) {
+func (client *Client) handleJoinChatPrivateMessage(message Event) {
 	target := client.server.findClientByName(message.Payload.To.Name)
-
 	if target == nil {
 		return
 	}
 
-	roomName := target.Name + client.Name
-	log.Println("[handleJoinRoomPrivateMessage]", roomName)
+	chatName := target.Name + client.Name
 
-	client.joinRoom(roomName, target)
-	target.joinRoom(roomName, client)
-
+	client.joinChat(chatName, target)
+	target.joinChat(chatName, client)
 }
 
-func (client *Client) joinRoom(roomName string, sender *Client) {
-	room := client.server.findRoomByName(roomName)
-	if room == nil {
-		room = client.server.createRoom(roomName, sender != nil)
+func (client *Client) joinChat(ChatName string, sender *Client) {
+	chat := client.server.findChatByName(ChatName)
+	if chat == nil {
+		chat = client.server.createChat(ChatName, sender != nil)
 	}
 
-	if sender == nil && room.Private {
+	if sender == nil && chat.Private {
 		return
 	}
 
-	if !client.isInRoom(room) {
-		client.rooms[room] = true
-		room.register <- client
-		client.notifyRoomJoined(room, sender)
+	if !client.isInChat(chat) {
+		client.Chats[chat] = true
+		chat.register <- client
+		client.notifyChatJoined(chat, sender)
 	}
 }
 
-func (client *Client) isInRoom(room *Room) bool {
-	if _, ok := client.rooms[room]; ok {
+func (client *Client) isInChat(chat *Chat) bool {
+	if _, ok := client.Chats[chat]; ok {
 		return true
 	}
 	return false
 }
 
-func (client *Client) notifyRoomJoined(room *Room, sender *Client) {
+func (client *Client) notifyChatJoined(chat *Chat, sender *Client) {
 	message := Event{
-		Type: RoomJoinedEvent,
+		Type: ChatJoinedEvent,
 		Payload: &WsMessage{
 			Message: client.Name + " joined",
 		},

@@ -4,7 +4,8 @@ type Message struct {
 	BaseModel
 	Text       *string
 	UserID     string
-	RoomID     string
+	ChatID     string
+	ChannelID  string
 	Attachment *Attachment
 }
 

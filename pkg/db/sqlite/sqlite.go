@@ -14,11 +14,11 @@ func InitDB() *sql.DB {
 	}
 
 	sqlStmt := `    
-    CREATE TABLE IF NOT EXISTS room (
-        id VARCHAR(255) NOT NULL PRIMARY KEY,
-        name VARCHAR(255) NOT NULL,
-        private TINYINT NULL
-    );
+		CREATE TABLE IF NOT EXISTS room (
+			id VARCHAR(255) NOT NULL PRIMARY KEY,
+			name VARCHAR(255) NOT NULL,
+			private TINYINT NULL
+		);
     `
 	_, err = db.Exec(sqlStmt)
 	if err != nil {
@@ -26,10 +26,10 @@ func InitDB() *sql.DB {
 	}
 
 	sqlStmt = ` 
-    CREATE TABLE IF NOT EXISTS user (
-        id VARCHAR(255) NOT NULL PRIMARY KEY,
-        name VARCHAR(255) NOT NULL
-    );
+		CREATE TABLE IF NOT EXISTS user (
+			id VARCHAR(255) NOT NULL PRIMARY KEY,
+			name VARCHAR(255) NOT NULL
+		);
     `
 	_, err = db.Exec(sqlStmt)
 	if err != nil {
