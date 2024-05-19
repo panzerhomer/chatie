@@ -1,11 +1,21 @@
 package models
 
+type WsChat struct {
+	BaseModel
+	Name     string    `json:"name"`
+	Private  bool      `json:"private"`
+	Info     string    `json:"info"`
+	Members  []User    `json:"members"`
+	Messages []Message `json:"members"`
+}
+
 type Chat struct {
-	ID       string `json:"chat_id"`
-	Name     string `json:"name"`
-	Private  bool   `json:"private"`
-	Members  []User
-	Messages []Message
+	BaseModel
+	Name     string    `json:"name"`
+	Private  bool      `json:"private"`
+	Info     string    `json:"info"`
+	Members  []User    `json:"members"`
+	Messages []Message `json:"messages"`
 }
 
 func (chat *Chat) GetId() string {

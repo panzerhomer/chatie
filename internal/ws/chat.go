@@ -1,110 +1,128 @@
 package ws
 
 import (
+	"chatie/internal/models"
 	"fmt"
-	"sync"
+	"log"
 
 	"github.com/google/uuid"
 )
 
-const welcomeMessage = "%s joined the chat"
+const welcomeMessage = "%s joined the room"
+const leaveMessage = "%s left the room"
 
-type Chat struct {
-	ID         uuid.UUID `json:"id"`
-	Name       string    `json:"name"`
-	Private    bool      `json:"private"`
+type WsChat struct {
+	id         uuid.UUID
+	name       string
 	clients    map[*Client]bool
 	register   chan *Client
 	unregister chan *Client
-	broadcast  chan *Event
-	sync.RWMutex
+	broadcast  chan *WebsocketMessage
+	private    bool
+	wsServer   *WsServer
 }
 
-func NewChat(name string, private bool) *Chat {
-	return &Chat{
-		ID:         uuid.New(),
-		Name:       name,
+func NewChat(wsServer *WsServer, name string, private bool) *WsChat {
+	return &WsChat{
+		id:         uuid.New(),
+		name:       name,
 		clients:    make(map[*Client]bool),
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
-		broadcast:  make(chan *Event),
-		Private:    private,
+		broadcast:  make(chan *WebsocketMessage),
+		private:    private,
+		wsServer:   wsServer,
 	}
 }
 
-func (c *Chat) Run() {
+func (c *WsChat) Run() {
+	go c.subscribeToChatMessages()
+
 	for {
 		select {
 		case client := <-c.register:
-			c.registerClientInRoom(client)
+			c.registerClientInChat(client)
 		case client := <-c.unregister:
-			c.unregisterClientInRoom(client)
+			c.unregisterClientInChat(client)
 		case message := <-c.broadcast:
-			c.broadcastToClientsInRoom(message.encode())
+			c.publishChatMessage(message.encode())
 		}
 	}
 }
 
-func (c *Chat) GetId() string {
-	return c.ID.String()
+func (c *WsChat) publishChatMessage(message []byte) {
+	err := c.wsServer.redis.Publish(ctx, c.GetName(), message).Err()
+	if err != nil {
+		log.Println(err)
+	}
 }
 
-func (c *Chat) GetName() string {
-	return c.Name
+func (c *WsChat) subscribeToChatMessages() {
+	pubsub := c.wsServer.redis.Subscribe(ctx, c.GetName())
+
+	ch := pubsub.Channel()
+
+	for msg := range ch {
+		c.broadcastToChatClients([]byte(msg.Payload))
+	}
 }
 
-func (c *Chat) registerClientInRoom(client *Client) {
-	c.Lock()
-	defer c.Unlock()
-
-	if !c.Private {
+func (c *WsChat) registerClientInChat(client *Client) {
+	fmt.Println("[char]", c.GetName(), " clients join", c.clients)
+	if !c.IsPrivate() {
 		c.notifyClientJoined(client)
+		// c.addUserToOnlineSet(client)
 	}
 	c.clients[client] = true
 }
 
-func (c *Chat) unregisterClientInRoom(client *Client) {
-	c.Lock()
-	defer c.Unlock()
-
-	c.notifyClientLeft(client)
-	delete(c.clients, client)
-}
-
-func (c *Chat) broadcastToClientsInRoom(message []byte) {
-	for client := range c.clients {
-		select {
-		case client.send <- message:
-		default:
-			delete(c.clients, client)
-		}
+func (c *WsChat) unregisterClientInChat(client *Client) {
+	if _, ok := c.clients[client]; ok {
+		delete(c.clients, client)
+		c.notifyClientLeft(client)
+		// c.removeUserFromOnlineSet(client)
+		fmt.Println("[char]", c.GetName(), " clients left", c.clients)
 	}
 }
 
-func (c *Chat) notifyClientJoined(client *Client) {
-	const welcomeMessage = "%s joined the c"
-
-	// msg := &Event{
-	// 	Type: SendMessageEvent,
-	// 	Payload: &ReceivedMessage{
-	// 		Room:    c,
-	// 		Message: fmt.Sprintf(welcomeMessage, client.GetName()),
-	// 	},
-	// }
-
-	c.broadcastToClientsInRoom([]byte(fmt.Sprintf(welcomeMessage, client.Name)))
+func (c *WsChat) broadcastToChatClients(message []byte) {
+	for client := range c.clients {
+		client.send <- message
+	}
 }
 
-func (c *Chat) notifyClientLeft(client *Client) {
-	const welcomeMessage = "%s left the c"
+func (c *WsChat) notifyClientJoined(client *Client) {
+	message := &WebsocketMessage{
+		Action: UserJoinedAction,
+		Target: c.GetID(),
+		Message: models.Message{
+			Text: fmt.Sprintf(welcomeMessage, client.GetName()),
+		},
+	}
 
-	// msg := &Event{
-	// 	Type: SendMessageEvent,
-	// 	Payload: &ReceivedMessage{
-	// 		Room:    c,
-	// 		Message: fmt.Sprintf(welcomeMessage, client.GetName()),
-	// 	},
-	// }
+	c.publishChatMessage(message.encode())
+}
 
-	c.broadcastToClientsInRoom([]byte(fmt.Sprintf(welcomeMessage, client.Name)))
+func (c *WsChat) notifyClientLeft(client *Client) {
+	message := &WebsocketMessage{
+		Action: UserLeftAction,
+		Target: c.GetID(),
+		Message: models.Message{
+			Text: fmt.Sprintf(leaveMessage, client.GetName()),
+		},
+	}
+
+	c.publishChatMessage(message.encode())
+}
+
+func (c *WsChat) GetID() string {
+	return c.id.String()
+}
+
+func (c *WsChat) GetName() string {
+	return c.name
+}
+
+func (c *WsChat) IsPrivate() bool {
+	return c.private
 }

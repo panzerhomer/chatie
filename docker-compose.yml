@@ -1,7 +1,18 @@
-version: '3.8'
+version: '3.9'
 
 services:
   redis:
     image: "redis:alpine"
     ports:
       - "6364:6379"
+
+  postgres:
+    image: postgres:alpine
+    environment:
+      POSTGRES_DB: "chat_db"
+      POSTGRES_USER: "admin"
+      POSTGRES_PASSWORD: "admin"
+    volumes:
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"

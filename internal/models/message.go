@@ -2,11 +2,11 @@ package models
 
 type Message struct {
 	BaseModel
-	Text       *string
-	UserID     string
-	ChatID     string
-	ChannelID  string
-	Attachment *Attachment
+	Text       string      `json:"text"`
+	UserID     string      `json:"userID"`
+	ChatID     string      `json:"chatID"`
+	ChannelID  string      `json:"channelID"`
+	Attachment *Attachment `json:"attachment"`
 }
 
 type Attachment struct {

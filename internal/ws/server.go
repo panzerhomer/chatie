@@ -1,197 +1,269 @@
 package ws
 
 import (
+	"chatie/internal/apperror"
 	"chatie/internal/models"
 	"chatie/internal/repository"
+	"chatie/internal/services"
 	"context"
-	"sync"
+	"encoding/json"
+	"errors"
+	"log"
 
-	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 )
+
+const PubSubGeneralChannel = "general"
 
 var ctx = context.Background()
 
 type WsServer struct {
-	clients        map[*Client]bool
-	chats          map[*Chat]bool
-	broadcast      chan []byte
-	register       chan *Client
-	unregister     chan *Client
-	users          map[*models.User]bool
-	redis          *redis.Client
+	clients    map[*Client]bool
+	register   chan *Client
+	unregister chan *Client
+	broadcast  chan []byte
+	wsChats    map[*WsChat]bool
+	users      []models.User
+	// userService services.UserServices
 	chatRepository repository.ChatRepository
-	userRepository repository.UserRepository
-	sync.RWMutex
+	userRepository services.UserRepository
+	redis          *redis.Client
+	// sync.RWMutex
 }
 
-func NewWsServer(redis *redis.Client, chatRepository repository.ChatRepository, userRepository repository.UserRepository) *WsServer {
+// NewWebsocketServer creates a new WsServer type
+func NewWsServer(
+	chatRepository repository.ChatRepository,
+	userRepository services.UserRepository,
+	redis *redis.Client,
+) *WsServer {
 	wsServer := &WsServer{
-		clients:    make(map[*Client]bool),
-		register:   make(chan *Client),
-		unregister: make(chan *Client),
-		chats:      make(map[*Chat]bool),
-		// users:          make(map[*models.User]bool),
+		clients:        make(map[*Client]bool),
+		register:       make(chan *Client),
+		unregister:     make(chan *Client),
+		broadcast:      make(chan []byte),
+		wsChats:        make(map[*WsChat]bool),
 		chatRepository: chatRepository,
 		userRepository: userRepository,
 		redis:          redis,
 	}
 
-	repoUsers, _ := wsServer.userRepository.GetAllUsers(ctx)
-	wsServer.users = make(map[*models.User]bool, len(repoUsers))
-	for i := 0; i < len(repoUsers); i++ {
-		wsServer.users[&repoUsers[i]] = true
+	var err error
+	wsServer.users, err = userRepository.GetAllUsers(context.Background())
+	if err != nil {
+		if errors.Is(err, apperror.ErrUserNotFound) {
+			log.Println("", err)
+		} else {
+			log.Println("can't extract users from database: ", err)
+		}
 	}
 
 	return wsServer
 }
 
 func (server *WsServer) Run() {
+	go server.listenPubSubChannel()
 	for {
 		select {
 		case client := <-server.register:
 			server.registerClient(client)
 		case client := <-server.unregister:
 			server.unregisterClient(client)
-		case message := <-server.broadcast:
-			server.broadcastToClients(message)
+			// case message := <-server.broadcast:
+			// 	server.broadcastToClients(message)
 		}
 	}
 }
 
-func clientToUser(c *Client) *models.User {
-	user := models.User{
-		BaseModel: models.BaseModel{
-			ID: c.ID.String(),
-		},
-		Name: c.Name,
+func (server *WsServer) publishClientJoined(client *Client) {
+	message := &WebsocketMessage{
+		Action: UserJoinedAction,
+		Sender: clientToUser(client),
 	}
-	return &user
+
+	if err := server.redis.Publish(ctx, PubSubGeneralChannel, message.encode()).Err(); err != nil {
+		log.Println(err)
+	}
+}
+
+func (server *WsServer) publishClientLeft(client *Client) {
+	message := &WebsocketMessage{
+		Action: UserLeftAction,
+		Sender: clientToUser(client),
+	}
+
+	if err := server.redis.Publish(ctx, PubSubGeneralChannel, message.encode()).Err(); err != nil {
+		log.Println(err)
+	}
+}
+
+func (server *WsServer) listenPubSubChannel() {
+	pubsub := server.redis.Subscribe(ctx, PubSubGeneralChannel)
+
+	ch := pubsub.Channel()
+
+	for msg := range ch {
+		var message WebsocketMessage
+		if err := json.Unmarshal([]byte(msg.Payload), &message); err != nil {
+			log.Printf("Error on unmarshal JSON message %s", err)
+			return
+		}
+
+		switch message.Action {
+		case UserJoinedAction:
+			server.handleUserJoined(message)
+		case UserLeftAction:
+			server.handleUserLeft(message)
+		case JoinChatPrivateAction:
+			server.handleUserJoinPrivate(message)
+		}
+	}
+}
+
+func (server *WsServer) handleUserJoined(message WebsocketMessage) {
+	// Add the user to the slice
+	if message.Sender != nil {
+		server.users = append(server.users, *message.Sender)
+	}
+	// server.users = append(server.users, *message.Sender)
+	server.broadcastToClients(message.encode())
+}
+
+func (server *WsServer) handleUserLeft(message WebsocketMessage) {
+	for i, user := range server.users {
+		if message.Sender != nil && user.GetID() == message.Sender.GetID() {
+			server.users[i] = server.users[len(server.users)-1]
+			server.users = server.users[:len(server.users)-1]
+		}
+	}
+
+	server.broadcastToClients(message.encode())
+}
+
+func (server *WsServer) handleUserJoinPrivate(message WebsocketMessage) {
+	targetClient := server.findClientByName(message.Target)
+	if targetClient != nil {
+		client := server.findClientByName(message.Sender.Name)
+		targetClient.joinChat(message.Target, client)
+	}
 }
 
 func (server *WsServer) registerClient(client *Client) {
-	server.Lock()
-	defer server.Unlock()
+	server.userRepository.InsertUser(ctx, clientToUser(client))
 
-	newUser := clientToUser(client)
-	server.userRepository.AddUser(ctx, newUser)
+	// server.notifyClientJoined(client)
+	// Publish user in PubSub
+	server.publishClientJoined(client)
+	// server.listOnlineClients(client)
 	server.clients[client] = true
-	server.users[newUser] = true
+	log.Println("ws server join", server.clients)
 }
 
 func (server *WsServer) unregisterClient(client *Client) {
-	server.Lock()
-	defer server.Unlock()
-
-	deleteUser := clientToUser(client)
-	server.userRepository.RemoveUser(ctx, deleteUser)
-	delete(server.users, deleteUser)
-	delete(server.clients, client)
-}
-
-func (server *WsServer) broadcastToClients(message []byte) {
-	for client := range server.clients {
-		select {
-		case client.send <- message:
-		default:
-			close(client.send)
-			delete(server.clients, client)
-		}
+	if _, ok := server.clients[client]; ok {
+		delete(server.clients, client)
+		// server.notifyClientLeft(client)
+		server.publishClientLeft(client)
 	}
+	log.Println("ws server left", server.clients)
 }
 
-func (server *WsServer) showOnlineClients(client *Client) {
-	for registeredClient := range server.users {
-		message := &Event{
-			Type: UserJoinedEvent,
-			Payload: &WsMessage{
-				From: registeredClient,
-			},
+func (server *WsServer) notifyClientJoined(client *Client) {
+	message := &WebsocketMessage{
+		Action: UserJoinedAction,
+		Sender: clientToUser(client),
+	}
+
+	server.broadcastToClients(message.encode())
+}
+
+func (server *WsServer) notifyClientLeft(client *Client) {
+	message := &WebsocketMessage{
+		Action: UserLeftAction,
+		Sender: clientToUser(client),
+	}
+
+	server.broadcastToClients(message.encode())
+}
+
+func (server *WsServer) listOnlineClients(client *Client) {
+	for existingClient := range server.clients {
+		message := &WebsocketMessage{
+			Action: UserJoinedAction,
+			Sender: clientToUser(existingClient),
 		}
 		client.send <- message.encode()
 	}
 }
 
-func (server *WsServer) findChatByName(name string) *Chat {
-	server.Lock()
-	defer server.Unlock()
+func (server *WsServer) broadcastToClients(message []byte) {
+	for client := range server.clients {
+		client.send <- message
+	}
+}
 
-	var chat *Chat
-	for c := range server.chats {
+func (server *WsServer) findChatByName(name string) *WsChat {
+	var chat *WsChat
+	for c := range server.wsChats {
 		if c.GetName() == name {
 			chat = c
 			break
 		}
 	}
 
-	if chat == nil {
-		chat = server.runChatFromRepository(name)
-	}
-
 	return chat
 }
 
-func (server *WsServer) createChat(name string, private bool) *Chat {
-	server.Lock()
-	defer server.Unlock()
-
-	chat := NewChat(name, private)
-	go chat.Run()
-	server.chats[chat] = true
-
-	return chat
-}
-
-func (server *WsServer) runChatFromRepository(name string) *Chat {
-	var chat *Chat
-	repoChat, _ := server.chatRepository.GetChatByName(ctx, name)
-	if repoChat != nil {
-		chat = NewChat(repoChat.GetName(), repoChat.GetPrivate())
-		chat.ID, _ = uuid.Parse(repoChat.GetId())
-		go chat.Run()
-		server.chats[chat] = true
-	}
-	return chat
-}
-
-func (server *WsServer) findChatByID(ID string) *Chat {
-	server.RLock()
-	defer server.RUnlock()
-
-	var chat *Chat
-	for c := range server.chats {
-		if c.GetId() == ID {
+func (server *WsServer) findRoomByID(ID string) *WsChat {
+	var chat *WsChat
+	for c := range server.wsChats {
+		if c.GetID() == ID {
 			chat = c
 			break
 		}
 	}
+
 	return chat
 }
 
-func (server *WsServer) findClientByName(name string) *Client {
-	server.RLock()
-	defer server.RUnlock()
+func (server *WsServer) createChat(name string, private bool) *WsChat {
+	chat := NewChat(server, name, private)
+	go chat.Run()
+	server.wsChats[chat] = true
 
-	var client *Client
-	for c := range server.clients {
-		if c.Name == name {
-			client = c
-			break
-		}
-	}
-	return client
+	return chat
 }
 
 func (server *WsServer) findClientByID(ID string) *Client {
-	server.RLock()
-	defer server.RUnlock()
-
-	var client *Client
-	for c := range server.clients {
-		if c.ID.String() == ID {
-			client = c
+	var foundClient *Client
+	for client := range server.clients {
+		if client.GetID() == ID {
+			foundClient = client
 			break
 		}
 	}
-	return client
+
+	return foundClient
+}
+
+func (server *WsServer) findClientByName(ID string) *Client {
+	var foundClient *Client
+	for client := range server.clients {
+		if client.GetName() == ID {
+			foundClient = client
+			break
+		}
+	}
+
+	return foundClient
+}
+
+func clientToUser(client *Client) *models.User {
+	user := &models.User{
+		// BaseModel: models.BaseModel{
+		// 	ID: client.GetID(),
+		// },
+		Name: client.GetName(),
+	}
+	return user
 }

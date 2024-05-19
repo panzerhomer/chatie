@@ -6,37 +6,43 @@ import (
 	"log"
 )
 
-const (
-	ChatJoinedEvent = "chat-joined"
-	UserLeftEvent   = "user-left"
-	UserJoinedEvent = "user-join"
-)
+// Subscribed Messages
+const SendMessageAction = "send-message"
+const JoinChatAction = "join-chat"
+const LeaveChatAction = "leave-chat"
+const UserJoinedAction = "user-join"
+const UserLeftAction = "user-left"
+const JoinChatPrivateAction = "join-chat-private"
 
-const SendMessageEvent = "send-message"
-const JoinChatEvent = "join-chat"
-const LeaveChatEvent = "leave-chat"
-const JoinChatPrivateEvent = "join-chat-private"
+const ChatJoinedAction = "chat-joined"
+const GetChatUsersAction = "get-chat-users"
 
-type Event struct {
-	Type    string     `json:"type"`
-	Payload *WsMessage `json:"payload"`
+type WebsocketMessage struct {
+	Action  string         `json:"action"`
+	Message models.Message `json:"message"`
+	Target  string         `json:"target"` // chat, user, channel ids
+	Sender  *models.User   `json:"sender"`
 }
 
-// message from client
-type WsMessage struct {
-	Chat    *Chat  `json:"chat"`
-	Message string `json:"message"`
-	// From    *Client `json:"from"`
-	// To      *Client `json:"to"`
-	From *models.User `json:"from"`
-	To   *models.User `json:"to"`
+type SystemMessage struct {
+	Action string `json:"action"`
+	Data   any    `json:"data"`
 }
 
-func (e *Event) encode() []byte {
-	encoding, err := json.Marshal(e)
+func (message *SystemMessage) encode() []byte {
+	json, err := json.Marshal(message)
 	if err != nil {
 		log.Println(err)
 	}
 
-	return encoding
+	return json
+}
+
+func (message *WebsocketMessage) encode() []byte {
+	json, err := json.Marshal(message)
+	if err != nil {
+		log.Println(err)
+	}
+
+	return json
 }
