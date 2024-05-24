@@ -4,9 +4,9 @@ import (
 	"chatie/internal/models"
 	"encoding/json"
 	"log"
-	"net/http"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
 	"github.com/gorilla/websocket"
@@ -42,15 +42,17 @@ type Client struct {
 	wsServer *WsServer
 	send     chan []byte
 	id       uuid.UUID
-	userID   string
+	userID   int
 	name     string
 	wsChats  map[*WsChat]bool
+	t        time.Time
 }
 
-func newClient(conn *websocket.Conn, wsServer *WsServer, name string) *Client {
+func newClient(conn *websocket.Conn, wsServer *WsServer, userID int) *Client {
 	return &Client{
-		id:       uuid.New(),
-		name:     name,
+		id:     uuid.New(),
+		userID: userID,
+		// name:     name,
 		conn:     conn,
 		wsServer: wsServer,
 		send:     make(chan []byte, 256),
@@ -60,7 +62,6 @@ func newClient(conn *websocket.Conn, wsServer *WsServer, name string) *Client {
 
 func (client *Client) readPump() {
 	defer func() {
-		log.Println(client.wsServer.clients)
 		client.disconnect()
 	}()
 
@@ -77,7 +78,7 @@ func (client *Client) readPump() {
 			}
 			break
 		}
-
+		client.t = time.Now()
 		client.handleNewMessage(jsonMessage)
 	}
 
@@ -115,6 +116,9 @@ func (client *Client) writePump() {
 			if err := w.Close(); err != nil {
 				return
 			}
+
+			tt := time.Now().Sub(client.t).Milliseconds()
+			log.Println("diff btw send and get: ", tt, tt/1000)
 		case <-ticker.C:
 			client.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if err := client.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
@@ -129,25 +133,21 @@ func (client *Client) disconnect() {
 	for chat := range client.wsChats {
 		chat.unregister <- client
 	}
-	close(client.send)
 	client.conn.Close()
+	close(client.send)
+	// client.conn.Close()
 }
 
-func ServeWS(wsServer *WsServer, w http.ResponseWriter, r *http.Request) {
-	name, ok := r.URL.Query()["name"]
+func ServeWS(wsServer *WsServer, c *gin.Context) {
+	userID := c.MustGet("userID").(int)
 
-	if !ok || len(name[0]) < 1 {
-		log.Println("Url Param 'name' is missing")
-		return
-	}
-
-	conn, err := upgrader.Upgrade(w, r, nil)
+	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		log.Println(err)
 		return
 	}
 
-	client := newClient(conn, wsServer, name[0])
+	client := newClient(conn, wsServer, userID)
 
 	go client.writePump()
 	go client.readPump()
@@ -164,7 +164,7 @@ func (client *Client) handleNewMessage(jsonMessage []byte) {
 
 	message.Sender = clientToUser(client)
 
-	log.Println("new event ", message.Action, message.Sender, message.Target, message.Message)
+	// log.Println("new event ", message.Action, message.Sender, message.Target, message.Message)
 
 	switch message.Action {
 	case SendMessageAction:
@@ -188,7 +188,7 @@ func (client *Client) handleNewMessage(jsonMessage []byte) {
 			}
 		}
 	default:
-		log.Println("unknown action", message.Action)
+		client.send <- message.encode()
 	}
 }
 
@@ -265,7 +265,7 @@ func (client *Client) joinChat(chatName string, sender *Client) *WsChat {
 func (client *Client) inviteTargetUser(targetID string, chat *WsChat) {
 	inviteMessage := &WebsocketMessage{
 		Action: JoinChatPrivateAction,
-		Message: models.Message{
+		Message: &models.Message{
 			Text: targetID,
 		},
 		Target: chat.GetID(),
@@ -273,7 +273,8 @@ func (client *Client) inviteTargetUser(targetID string, chat *WsChat) {
 	}
 
 	if err := client.wsServer.redis.Publish(ctx, PubSubGeneralChannel, inviteMessage.encode()).Err(); err != nil {
-		log.Println(err)
+		// log.Println(err)
+		return
 	}
 }
 
@@ -301,4 +302,8 @@ func (client *Client) GetName() string {
 
 func (client *Client) GetID() string {
 	return client.id.String()
+}
+
+func (client *Client) GetUserID() int {
+	return client.userID
 }

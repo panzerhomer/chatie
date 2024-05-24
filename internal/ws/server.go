@@ -23,7 +23,7 @@ type WsServer struct {
 	unregister chan *Client
 	broadcast  chan []byte
 	wsChats    map[*WsChat]bool
-	users      []models.User
+	users      map[*models.User]bool
 	// userService services.UserServices
 	chatRepository repository.ChatRepository
 	userRepository services.UserRepository
@@ -43,13 +43,14 @@ func NewWsServer(
 		unregister:     make(chan *Client),
 		broadcast:      make(chan []byte),
 		wsChats:        make(map[*WsChat]bool),
+		users:          make(map[*models.User]bool),
 		chatRepository: chatRepository,
 		userRepository: userRepository,
 		redis:          redis,
 	}
 
 	var err error
-	wsServer.users, err = userRepository.GetAllUsers(context.Background())
+	users, err := userRepository.GetAll(context.Background())
 	if err != nil {
 		if errors.Is(err, apperror.ErrUserNotFound) {
 			log.Println("", err)
@@ -57,6 +58,14 @@ func NewWsServer(
 			log.Println("can't extract users from database: ", err)
 		}
 	}
+
+	for i := 0; i < len(users); i++ {
+		wsServer.users[&users[i]] = true
+	}
+
+	// for k, _ := range wsServer.users {
+	// 	log.Println("{wsServer}", k.ID, k.Email, k.Name)
+	// }
 
 	return wsServer
 }
@@ -82,7 +91,8 @@ func (server *WsServer) publishClientJoined(client *Client) {
 	}
 
 	if err := server.redis.Publish(ctx, PubSubGeneralChannel, message.encode()).Err(); err != nil {
-		log.Println(err)
+		// log.Println(err)
+		// return
 	}
 }
 
@@ -93,7 +103,8 @@ func (server *WsServer) publishClientLeft(client *Client) {
 	}
 
 	if err := server.redis.Publish(ctx, PubSubGeneralChannel, message.encode()).Err(); err != nil {
-		log.Println(err)
+		// log.Println(err)
+		// return
 	}
 }
 
@@ -123,19 +134,21 @@ func (server *WsServer) listenPubSubChannel() {
 func (server *WsServer) handleUserJoined(message WebsocketMessage) {
 	// Add the user to the slice
 	if message.Sender != nil {
-		server.users = append(server.users, *message.Sender)
+		// server.users = append(server.users, *message.Sender)
+		server.users[message.Sender] = true
 	}
 	// server.users = append(server.users, *message.Sender)
 	server.broadcastToClients(message.encode())
 }
 
 func (server *WsServer) handleUserLeft(message WebsocketMessage) {
-	for i, user := range server.users {
-		if message.Sender != nil && user.GetID() == message.Sender.GetID() {
-			server.users[i] = server.users[len(server.users)-1]
-			server.users = server.users[:len(server.users)-1]
-		}
-	}
+	// for i, user := range server.users {
+	// 	if message.Sender != nil && user.GetID() == message.Sender.GetID() {
+	// 		server.users[i] = server.users[len(server.users)-1]
+	// 		server.users = server.users[:len(server.users)-1]
+	// 	}
+	// }
+	server.users[message.Sender] = false
 
 	server.broadcastToClients(message.encode())
 }
@@ -149,23 +162,20 @@ func (server *WsServer) handleUserJoinPrivate(message WebsocketMessage) {
 }
 
 func (server *WsServer) registerClient(client *Client) {
-	server.userRepository.InsertUser(ctx, clientToUser(client))
-
+	// server.userRepository.Create(ctx, clientToUser(client))
 	// server.notifyClientJoined(client)
 	// Publish user in PubSub
 	server.publishClientJoined(client)
 	// server.listOnlineClients(client)
 	server.clients[client] = true
-	log.Println("ws server join", server.clients)
 }
 
 func (server *WsServer) unregisterClient(client *Client) {
 	if _, ok := server.clients[client]; ok {
 		delete(server.clients, client)
 		// server.notifyClientLeft(client)
-		server.publishClientLeft(client)
+		// server.publishClientLeft(client)
 	}
-	log.Println("ws server left", server.clients)
 }
 
 func (server *WsServer) notifyClientJoined(client *Client) {

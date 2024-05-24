@@ -1,11 +1,13 @@
 package handlers
 
 import (
-	"chatie/internal/apperror"
+	"chatie/internal/config"
 	"chatie/internal/models"
 	manager "chatie/pkg/auth"
 	"context"
+	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -24,12 +26,18 @@ type UserService interface {
 type userHandler struct {
 	userService  UserService
 	tokenManager manager.TokenManager // jwt manager
+	config       config.Config
 }
 
-func NewUserhandler(userService UserService, tokenManager manager.TokenManager) *userHandler {
+func NewUserhandler(
+	userService UserService,
+	tokenManager manager.TokenManager,
+	config config.Config,
+) *userHandler {
 	return &userHandler{
 		userService:  userService,
 		tokenManager: tokenManager,
+		config:       config,
 	}
 }
 
@@ -57,11 +65,9 @@ func (u *userHandler) Register(c *gin.Context) {
 
 	toUser.GenerateUsername() // generate unique username
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
-	defer cancel()
-
-	user, err := u.userService.CreateUser(ctx, toUser)
+	user, err := u.userService.CreateUser(context.Background(), toUser)
 	if err != nil {
+		log.Println("{sign up}", err)
 		// select {
 		// case <-ctx.Done():
 		// 	c.JSON(http.StatusRequestTimeout, gin.H{"error": ctx.Err().Error()})
@@ -87,27 +93,18 @@ func (u *userHandler) Login(c *gin.Context) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
-	defer cancel()
-
-	user, err := u.userService.CheckUser(ctx, userLogin.Email, userLogin.Password)
+	user, err := u.userService.CheckUser(context.Background(), userLogin.Email, userLogin.Password)
 	if err != nil {
-		select {
-		case <-ctx.Done():
-			c.JSON(http.StatusRequestTimeout, gin.H{"error": "timeout request"})
-			return
-		default:
-			getErrorResponse(c, err)
-			return
-		}
+		getErrorResponse(c, err)
+		return
 	}
 
-	tokenAccess, err := u.tokenManager.NewJWT(user.ID, time.Minute*30)
+	tokenAccess, err := u.tokenManager.NewJWT(user.ID, u.config.Auth.AccessTokenTTL)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	tokenRefresh, err := u.tokenManager.NewJWT(user.ID, time.Hour*24*7)
+	tokenRefresh, err := u.tokenManager.NewJWT(user.ID, u.config.Auth.RefreshTokenTTL)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -118,7 +115,7 @@ func (u *userHandler) Login(c *gin.Context) {
 		Refresh: tokenRefresh,
 	}
 
-	c.SetCookie("access_token", tokenAccess, 3600, "/", "localhost", false, true)
+	c.SetCookie("access_token", tokenAccess, 3600, "/", u.config.HTTP.Host, false, true)
 
 	c.JSON(http.StatusOK, tokens)
 }
@@ -131,16 +128,6 @@ func (u *userHandler) Logout(c *gin.Context) {
 
 func (u *userHandler) Hello(c *gin.Context) {
 	userID := c.GetInt(UserKeyCtx)
-	// if !ok {
-	// 	c.JSON(http.StatusInternalServerError, gin.H{"message": apperror.ErrInternal})
-	// 	return
-	// }
-
-	// userID, ok := userKeyID.(int)
-	// if !ok {
-	// 	c.JSON(http.StatusInternalServerError, gin.H{"message": apperror.ErrInternal})
-	// 	return
-	// }
 
 	user, err := u.userService.GetUserByID(context.Background(), userID)
 	if err != nil {
@@ -148,32 +135,73 @@ func (u *userHandler) Hello(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": user})
+	c.JSON(http.StatusOK, user)
+}
+
+type refreshRequest struct {
+	Token string `json:"token"`
 }
 
 func (u *userHandler) RefreshAuth(c *gin.Context) {
-	// token, err := c.Cookie("refresh_token")
-	// if err != nil {
-	// 	c.JSON(http.StatusUnauthorized, gin.H{"error": err})
-	// 	c.Abort()
-	// 	return
-	// }
+	var refreshReq refreshRequest
+	if err := c.ShouldBindJSON(&refreshReq); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 
-	// token
+	token, err := u.tokenManager.Parse(refreshReq.Token)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid token"})
+		return
+	}
+
+	userID, err := strconv.Atoi(token)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	newTokenAccess, err := u.tokenManager.NewJWT(userID, u.config.Auth.AccessTokenTTL)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	newTokenRefresh, err := u.tokenManager.NewJWT(userID, u.config.Auth.RefreshTokenTTL)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	tokens := tokenResponse{
+		Access:  newTokenAccess,
+		Refresh: newTokenRefresh,
+	}
+
+	c.SetCookie(
+		"access_token",
+		newTokenAccess,
+		int(u.config.Auth.AccessTokenTTL),
+		"/",
+		u.config.HTTP.Host,
+		false,
+		true,
+	)
+
+	c.JSON(http.StatusOK, tokens)
 }
 
 func getErrorResponse(c *gin.Context, err error) {
 	switch err {
-	case apperror.ErrInternal:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-	case apperror.ErrUserExists:
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-	case apperror.ErrUserInvalidCredentials:
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-	case apperror.ErrUsersNotFound:
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-	case apperror.ErrUserNotFound:
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+	// case apperror.ErrInternal:
+	// 	c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	// case apperror.ErrUserExists:
+	// 	c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	// case apperror.ErrUserInvalidCredentials:
+	// 	c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	// case apperror.ErrUsersNotFound:
+	// 	c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+	// case apperror.ErrUserNotFound:
+	// 	c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 	default:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 	}

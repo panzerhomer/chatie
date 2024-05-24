@@ -1,4 +1,4 @@
-package handlers
+package middleware
 
 import (
 	"chatie/internal/apperror"
@@ -32,7 +32,7 @@ func AuthUser(tokenManager manager.TokenManager) gin.HandlerFunc {
 			return
 		}
 
-		c.Set(UserKeyCtx, userID)
+		c.Set("userID", userID)
 
 		c.Next()
 	}

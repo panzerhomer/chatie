@@ -10,32 +10,49 @@ import (
 
 const emailRgxString = `^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`
 
-type ChatUser struct {
-	// BaseModel
-	ID         int    `json:"id"`
-	Role       string `json:"role"`
-	Name       string `json:"name"`
-	Lastname   string `json:"lastname"`
-	Patronymic string `json:"patronymic"`
-	Tag        string `json:"tag"`
-	Username   string `json:"username"`
-	Email      string `json:"email"`
-	IsOnline   bool   `json:"isOnline"`
+type ResetUser struct {
+	Email       string
+	Password    string
+	ResetToken  string
+	TokenExpiry time.Time
 }
 
+type ChatUser struct {
+	// BaseModel
+	ID         int       `json:"id"`
+	Role       string    `json:"role"`
+	Info       string    `json:"info"`
+	Name       string    `json:"name"`
+	Lastname   string    `json:"lastname"`
+	Patronymic string    `json:"patronymic"`
+	Tag        string    `json:"tag"`
+	Username   string    `json:"username"`
+	Email      string    `json:"email"`
+	IsOnline   bool      `json:"isOnline"`
+	JoinedAt   time.Time `json:"joinedAt"`
+	IsBanned   bool
+}
+
+var (
+	UserAdmin   = "admin"
+	UserOwner   = "owner"
+	UserDefault = "user"
+)
+
 type User struct {
-	ID         int    `json:"id"`
-	Role       string `json:"role"`
-	Name       string `json:"name"`
-	Lastname   string `json:"lastname"`
-	Patronymic string `json:"patronymic"`
-	Tag        string `json:"tag"`
-	Username   string `json:"username"`
-	Email      string `json:"email"`
-	Password   string `json:"-"`
-	// IsOnline   bool      `json:"isOnline"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	ID         int       `json:"id"`
+	Role       string    `json:"role"`
+	Name       string    `json:"name"`
+	Lastname   string    `json:"lastname"`
+	Patronymic string    `json:"patronymic"`
+	Tag        string    `json:"tag"`
+	Username   string    `json:"username"`
+	Email      string    `json:"email"`
+	Password   string    `json:"password"`
+	Info       string    `json:"info"`
+	IsOnline   bool      `json:"isOnline"`
+	CreatedAt  time.Time `json:"createdAt"`
+	UpdatedAt  time.Time `json:"updatedAt"`
 }
 
 func (u *User) Sanitaze() {
@@ -105,7 +122,6 @@ func (u *User) GenerateUsername() {
 		return r
 	}, russianText)
 
-	// r := rand.New(rand.NewSource(99))
 	latinText += fmt.Sprintf("%v%v", time.Now().Year()/100, rand.Intn(9000)+1000)
 
 	u.Username = latinText

@@ -1,5 +1,5 @@
 CREATE TABLE employees (
-  employee_id bigserial PRIMARY KEY,
+  employee_id bigint primary key generated always as identity,
   position varchar DEFAULT 'candidate', -- set by users of product, it's user's tag
   email varchar NOT NULL UNIQUE,
   status varchar DEFAULT 'active', -- empty, banned, active
@@ -10,12 +10,13 @@ CREATE TABLE employees (
 );
 
 CREATE TABLE users (
-  user_id bigserial PRIMARY KEY,
-  username varchar NOT NULL UNIQUE, -- generates automatically
+  user_id bigint primary key generated always as identity,
+  username varchar NOT NULL, -- generates automatically
   firstname varchar DEFAULT '',
   lastname varchar DEFAULT '',
   patronymic varchar DEFAULT '',
   avatar varchar,
+  info varchar(255) CHECK (char_length(password) <= 255) ,
   email varchar NOT NULL UNIQUE,
   password varchar(255) NOT NULL,
   role varchar DEFAULT 'user', -- user, admin
@@ -26,7 +27,7 @@ CREATE TABLE users (
 );
 
 CREATE TABLE files (
-  file_id bigserial PRIMARY KEY,
+  file_id bigint primary key generated always as identity,
   author_id bigint,
   file_name varchar,
   file_type varchar,
@@ -37,15 +38,15 @@ CREATE TABLE files (
 );
 
 CREATE TABLE chats (
-  chat_id bigserial PRIMARY KEY,
+  chat_id bigint primary key generated always as identity,
   owner_id bigint NOT NULL,
+  name varchar NOT NULL,
   info varchar NOT NULL DEFAULT '',
-  description varchar DEFAULT '',
   is_private boolean NOT NULL,
+  link VARCHAR NOT NULL UNIQUE,
+  is_deleted bool DEFAULT false,
   created_at timestamp DEFAULT NOW(),
   updated_at timestamp DEFAULT NOW(),
-  link VARCHAR DEFAULT '',
-  is_deleted bool DEFAULT false,
   FOREIGN KEY (owner_id) REFERENCES users (user_id)
 );
 
@@ -53,26 +54,38 @@ CREATE TABLE chat_members (
   chat_id bigint,
   user_id bigint,
   user_role varchar NOT NULL, -- owner, admin, user
-  status varchar NOT NULL, -- banned, unbanned
+  is_banned bool DEFAULT false,
   joined_at timestamp DEFAULT NOW(),
   banned_at timestamp DEFAULT NOW(),
   is_deleted bool DEFAULT false,
   PRIMARY KEY (chat_id, user_id),
-  FOREIGN KEY (user_id) REFERENCES users (user_id)
+  FOREIGN KEY (user_id) REFERENCES users (user_id),
+  FOREIGN KEY (chat_id) REFERENCES chats (user_id)
 );
 
 CREATE TABLE messages (
-  message_id bigserial PRIMARY KEY,
+  message_id bigint primary key generated always as identity,
   text varchar,
   from_id bigint,
   to_id bigint,
   chat_id bigint,
   attachment_ids bigint[],
   is_deleted boolean DEFAULT false,
+  is_read boolean DEFAULT false,
   created_at timestamp DEFAULT now(),
   updated_at timestamp DEFAULT now(),
   FOREIGN KEY (from_id) REFERENCES users (user_id),
   FOREIGN KEY (chat_id) REFERENCES chats (chat_id)
+);
+
+CREATE TABLE mentions (
+  mention_id bigint primary key generated always as identity,
+  user_id INT,
+  mentioned_user_id INT,
+  message_id INT,
+  created_at timestamp DEFAULT now(),
+  updated_at timestamp DEFAULT now(),
+  FOREIGN KEY (message_id) REFERENCES messages(message_id)
 );
 
 -- CREATE TABLE IF NOT EXISTS auth.session
@@ -82,15 +95,15 @@ CREATE TABLE messages (
 --   userid    INT REFERENCES auth.person (id)
 -- );
 
-CREATE TABLE folders (
-  folder_id bigserial PRIMARY KEY,
-  user_id bigint,
-  folder_name varchar,
-  chat_ids bigint[], -- denormolize 
-  created_at timestamp DEFAULT now(),
-  updated_at timestamp DEFAULT now(),
-  FOREIGN KEY (from_id) REFERENCES users (user_id),
-);
+-- CREATE TABLE folders (
+--   folder_id bigserial PRIMARY KEY,
+--   user_id bigint,
+--   folder_name varchar,
+--   chat_ids bigint[], -- denormolize 
+--   created_at timestamp DEFAULT now(),
+--   updated_at timestamp DEFAULT now(),
+--   FOREIGN KEY (from_id) REFERENCES users (user_id)
+-- );
 
 -- CREATE TABLE channels (
 --   channel_id bigserial PRIMARY KEY,

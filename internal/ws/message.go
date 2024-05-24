@@ -10,7 +10,7 @@ import (
 const SendMessageAction = "send-message"
 const JoinChatAction = "join-chat"
 const LeaveChatAction = "leave-chat"
-const UserJoinedAction = "user-join"
+const UserJoinedAction = "user-joined"
 const UserLeftAction = "user-left"
 const JoinChatPrivateAction = "join-chat-private"
 
@@ -18,10 +18,10 @@ const ChatJoinedAction = "chat-joined"
 const GetChatUsersAction = "get-chat-users"
 
 type WebsocketMessage struct {
-	Action  string         `json:"action"`
-	Message models.Message `json:"message"`
-	Target  string         `json:"target"` // chat, user, channel ids
-	Sender  *models.User   `json:"sender"`
+	Action  string          `json:"action"`
+	Message *models.Message `json:"message"`
+	Target  string          `json:"target"` // chat, user, channel ids
+	Sender  *models.User    `json:"sender"`
 }
 
 type SystemMessage struct {

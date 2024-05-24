@@ -18,7 +18,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"github.com/sirupsen/logrus"
 )
@@ -53,11 +53,11 @@ func main() {
 
 	dsn := fmt.Sprintf("host=%v port=%v user=%v password=%v dbname=%v sslmode=disable",
 		cfg.Postgres.Host, cfg.Postgres.Port, cfg.Postgres.User, cfg.Postgres.Password, cfg.Postgres.Name)
-	conn, err := pgx.Connect(ctx, dsn)
+	dbpool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		logger.Fatal("connection failed: ", err)
 	}
-	defer conn.Close(ctx)
+	defer dbpool.Close()
 	logger.Debug("postgres connected")
 
 	opt, err := redis.ParseURL("redis://localhost:6364/0")
@@ -67,25 +67,25 @@ func main() {
 	redis := redis.NewClient(opt)
 	logger.Debug("redis connected", redis)
 
-	chatRepo := repository.NewChatRepository(conn)
-	userRepo := repository.NewUserRepository(conn)
+	chatRepo := repository.NewChatRepository(dbpool)
+	userRepo := repository.NewUserRepository(dbpool)
 
 	hub := ws.NewWsServer(chatRepo, userRepo, redis)
 	go hub.Run()
 	logger.Debug("websocket server started")
 
-	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		ws.ServeWS(hub, w, r)
-	})
-
 	tokenManager, _ := manager.NewManager(cfg.Auth.SigningKey)
 
 	userSerice := services.NewUserService(userRepo)
-	userHandler := handlers.NewUserhandler(userSerice, tokenManager)
+	userHandler := handlers.NewUserhandler(userSerice, tokenManager, cfg)
 
-	routes := handlers.Routes(userHandler)
+	router := handlers.Routes(userHandler, hub)
 
-	server := server.NewServer(&cfg, routes)
+	// router.GET("/ws", middleware.AuthUser(tokenManager), func(c *gin.Context) {
+	// 	ws.ServeWS(hub, c)
+	// })
+
+	server := server.NewServer(&cfg, router)
 
 	go func() {
 		if err := server.Run(); err != nil && err != http.ErrServerClosed {
@@ -99,7 +99,7 @@ func main() {
 	<-quit
 	log.Println("Shutdown Server ...")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if err := server.Stop(ctx); err != nil {
 		logger.Fatal("Server Shutdown:", err)

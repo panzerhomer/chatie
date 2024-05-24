@@ -1,24 +1,32 @@
 package models
 
-type WsChat struct {
-	BaseModel
-	Name     string    `json:"name"`
-	Private  bool      `json:"private"`
-	Info     string    `json:"info"`
-	Members  []User    `json:"members"`
-	Messages []Message `json:"members"`
-}
+import "github.com/google/uuid"
+
+// type WsChat struct {
+// 	BaseModel
+// 	Name     string    `json:"name"`
+// 	Private  bool      `json:"private"`
+// 	Info     string    `json:"info"`
+// 	Members  []User    `json:"members"`
+// 	Messages []Message `json:"members"`
+// }
 
 type Chat struct {
 	BaseModel
-	Name     string    `json:"name"`
-	Private  bool      `json:"private"`
-	Info     string    `json:"info"`
+	Name     string `json:"name"`
+	Private  bool   `json:"private"`
+	Info     string `json:"info"`
+	Link     string
+	OwnerID  int
 	Members  []User    `json:"members"`
 	Messages []Message `json:"messages"`
 }
 
-func (chat *Chat) GetId() string {
+func (chat *Chat) GenerateLink() {
+	chat.Link = "join/" + uuid.New().String()
+}
+
+func (chat *Chat) GetId() int {
 	return chat.ID
 }
 

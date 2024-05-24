@@ -9,17 +9,18 @@ import (
 	"regexp"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type userRepo struct {
-	db *pgx.Conn
+	db *pgxpool.Pool
 }
 
-func NewUserRepository(db *pgx.Conn) *userRepo {
+func NewUserRepository(db *pgxpool.Pool) *userRepo {
 	return &userRepo{db}
 }
 
-func (r *userRepo) GetUserByEmail(ctx context.Context, email string) (*models.User, error) {
+func (r *userRepo) GetByEmail(ctx context.Context, email string) (*models.User, error) {
 	query := `
 		SELECT 
 			u.user_id, 
@@ -71,7 +72,7 @@ func (r *userRepo) GetUserByEmail(ctx context.Context, email string) (*models.Us
 	return &user, nil
 }
 
-func (r *userRepo) GetUserByUsername(ctx context.Context, username string) (*models.User, error) {
+func (r *userRepo) GetByUsername(ctx context.Context, username string) (*models.User, error) {
 	query := `
 		SELECT 
 			u.user_id, 
@@ -120,29 +121,25 @@ func (r *userRepo) GetUserByUsername(ctx context.Context, username string) (*mod
 	return &user, nil
 }
 
-func (r *userRepo) InsertUser(ctx context.Context, user *models.User) (int, error) {
-	log.Println("InsertUser befire tx", user)
+func (r *userRepo) Create(ctx context.Context, user *models.User) (int, error) {
 	tx, err := r.db.BeginTx(context.TODO(), pgx.TxOptions{})
 	if err != nil {
-		return -1, apperror.ErrInternal
+		return -1, err
 	}
-	defer func() {
-		if err != nil {
-			tx.Rollback(context.TODO())
-		} else {
-			tx.Commit(context.TODO())
-		}
-	}()
+	defer tx.Rollback(context.Background())
 
 	queryUsers := `
 		INSERT INTO 
 			users(username, firstname, lastname, patronymic, email, password) 
 		VALUES ($1, $2, $3, $4, $5, $6) RETURNING user_id`
 
-	log.Println("InsertUser after txt", user)
+	_, err = tx.Prepare(ctx, "InsertIntoUsers", queryUsers)
+	if err != nil {
+		return -1, err
+	}
 
 	var userID int
-	err = r.db.QueryRow(ctx, queryUsers, user.Username, user.Name, user.Lastname, user.Patronymic, user.Email, user.Password).Scan(&userID)
+	err = tx.QueryRow(ctx, "InsertIntoUsers", user.Username, user.Name, user.Lastname, user.Patronymic, user.Email, user.Password).Scan(&userID)
 	if err != nil {
 		if isDuplicateError(err) {
 			return -1, apperror.ErrUserExists
@@ -150,25 +147,27 @@ func (r *userRepo) InsertUser(ctx context.Context, user *models.User) (int, erro
 		return -1, err
 	}
 
-	log.Println("InsertUser after txt", user)
+	queryEmployees := `INSERT INTO employees(email) VALUES ($1)`
 
-	queryEmployees := `
-		INSERT INTO 
-			employees(email) 
-		VALUES ($1)
-	`
-
-	_, err = r.db.Exec(ctx, queryEmployees, user.Email)
+	_, err = tx.Prepare(ctx, "InsertIntoEmp", queryEmployees)
 	if err != nil {
-		log.Println("InsertUser errerr after txt", err)
+		return -1, err
+	}
 
+	_, err = tx.Exec(ctx, "InsertIntoEmp", user.Email)
+	if err != nil {
+		return -1, err
+	}
+
+	err = tx.Commit(context.Background())
+	if err != nil {
 		return -1, err
 	}
 
 	return userID, nil
 }
 
-func (r *userRepo) DeleteUser(ctx context.Context, user *models.User) error {
+func (r *userRepo) Delete(ctx context.Context, user *models.User) error {
 	_, err := r.db.Exec(ctx, "DELETE FROM users WHERE user_id = $1", user.ID)
 	if err != nil {
 		return err
@@ -177,7 +176,30 @@ func (r *userRepo) DeleteUser(ctx context.Context, user *models.User) error {
 	return nil
 }
 
-func (r *userRepo) GetUserByID(ctx context.Context, userID int) (*models.User, error) {
+func (r *userRepo) Update(ctx context.Context, user *models.User) (*models.User, error) {
+	query := `UPDATE users SET`
+	param := ""
+
+	switch {
+	case user.Info != "":
+		query += " info = $2 "
+		param = user.Info
+	case user.Password != "":
+		query += " password = $2 "
+		param = user.Info
+	}
+
+	query += " WHERE user_id = $1"
+
+	_, err := r.db.Exec(ctx, query, user.ID, param)
+	if err != nil {
+		return nil, err
+	}
+
+	return r.GetByID(ctx, user.ID)
+}
+
+func (r *userRepo) GetByID(ctx context.Context, userID int) (*models.User, error) {
 	query := `
 		SELECT 
 			u.user_id, 
@@ -226,7 +248,7 @@ func (r *userRepo) GetUserByID(ctx context.Context, userID int) (*models.User, e
 	return &user, nil
 }
 
-func (r *userRepo) GetAllUsers(ctx context.Context) ([]models.User, error) {
+func (r *userRepo) GetAll(ctx context.Context) ([]models.User, error) {
 	query := `
 		SELECT 
 			u.user_id, 

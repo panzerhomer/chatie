@@ -11,7 +11,7 @@ import (
 
 type TokenManager interface {
 	NewJWT(userID int, ttl time.Duration) (string, error)
-	Parse(accessToken string) (string, error)
+	Parse(tokenIn string) (string, error)
 	NewRefreshToken() (string, error)
 }
 
@@ -36,8 +36,8 @@ func (m *Manager) NewJWT(userID int, ttl time.Duration) (string, error) {
 	return token.SignedString([]byte(m.signingKey))
 }
 
-func (m *Manager) Parse(accessToken string) (string, error) {
-	token, err := jwt.Parse(accessToken, func(token *jwt.Token) (i interface{}, err error) {
+func (m *Manager) Parse(tokenIn string) (string, error) {
+	token, err := jwt.Parse(tokenIn, func(token *jwt.Token) (i interface{}, err error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}

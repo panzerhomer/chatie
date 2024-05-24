@@ -14,6 +14,7 @@ const leaveMessage = "%s left the room"
 type WsChat struct {
 	id         uuid.UUID
 	name       string
+	chatID     int
 	clients    map[*Client]bool
 	register   chan *Client
 	unregister chan *Client
@@ -68,7 +69,7 @@ func (c *WsChat) subscribeToChatMessages() {
 }
 
 func (c *WsChat) registerClientInChat(client *Client) {
-	fmt.Println("[char]", c.GetName(), " clients join", c.clients)
+	// fmt.Println("[char]", c.GetName(), " clients join", c.clients)
 	if !c.IsPrivate() {
 		c.notifyClientJoined(client)
 		// c.addUserToOnlineSet(client)
@@ -81,7 +82,7 @@ func (c *WsChat) unregisterClientInChat(client *Client) {
 		delete(c.clients, client)
 		c.notifyClientLeft(client)
 		// c.removeUserFromOnlineSet(client)
-		fmt.Println("[char]", c.GetName(), " clients left", c.clients)
+		// fmt.Println("[char]", c.GetName(), " clients left", c.clients)
 	}
 }
 
@@ -95,7 +96,7 @@ func (c *WsChat) notifyClientJoined(client *Client) {
 	message := &WebsocketMessage{
 		Action: UserJoinedAction,
 		Target: c.GetID(),
-		Message: models.Message{
+		Message: &models.Message{
 			Text: fmt.Sprintf(welcomeMessage, client.GetName()),
 		},
 	}
@@ -107,7 +108,7 @@ func (c *WsChat) notifyClientLeft(client *Client) {
 	message := &WebsocketMessage{
 		Action: UserLeftAction,
 		Target: c.GetID(),
-		Message: models.Message{
+		Message: &models.Message{
 			Text: fmt.Sprintf(leaveMessage, client.GetName()),
 		},
 	}

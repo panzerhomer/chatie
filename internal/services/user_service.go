@@ -7,12 +7,13 @@ import (
 )
 
 type UserRepository interface {
-	InsertUser(ctx context.Context, user *models.User) (int, error)
-	GetUserByEmail(ctx context.Context, email string) (*models.User, error)
-	GetUserByUsername(ctx context.Context, email string) (*models.User, error)
-	DeleteUser(ctx context.Context, user *models.User) error
-	GetUserByID(ctx context.Context, userID int) (*models.User, error)
-	GetAllUsers(ctx context.Context) ([]models.User, error)
+	Create(ctx context.Context, user *models.User) (int, error)
+	GetByEmail(ctx context.Context, email string) (*models.User, error)
+	GetByUsername(ctx context.Context, email string) (*models.User, error)
+	Delete(ctx context.Context, user *models.User) error
+	GetByID(ctx context.Context, userID int) (*models.User, error)
+	GetAll(ctx context.Context) ([]models.User, error)
+	Update(ctx context.Context, user *models.User) (*models.User, error)
 }
 
 type userService struct {
@@ -31,7 +32,7 @@ func (u *userService) CreateUser(ctx context.Context, user *models.User) (*model
 
 	user.Password = hashedPassword
 
-	userID, err := u.userRepo.InsertUser(ctx, user)
+	userID, err := u.userRepo.Create(ctx, user)
 	if err != nil {
 		return nil, err
 	}
@@ -56,8 +57,17 @@ func (u *userService) CheckUser(ctx context.Context, email string, password stri
 	return user, nil
 }
 
+func (u *userService) UpdateInfo(ctx context.Context, user *models.User) (*models.User, error) {
+	user, err := u.userRepo.Update(ctx, user)
+	if err != nil {
+		return nil, err
+	}
+
+	return user, nil
+}
+
 func (u *userService) GetUserByEmail(ctx context.Context, email string) (*models.User, error) {
-	user, err := u.userRepo.GetUserByEmail(ctx, email)
+	user, err := u.userRepo.GetByEmail(ctx, email)
 	if err != nil {
 		return nil, err
 	}
@@ -66,18 +76,16 @@ func (u *userService) GetUserByEmail(ctx context.Context, email string) (*models
 }
 
 func (u *userService) GetUserByID(ctx context.Context, userID int) (*models.User, error) {
-	user, err := u.userRepo.GetUserByID(ctx, userID)
+	user, err := u.userRepo.GetByID(ctx, userID)
 	if err != nil {
-		return nil, err
+		return nil, apperror.ErrUserNotUpdated
 	}
-
-	// user.Password = ""
 
 	return user, nil
 }
 
 func (u *userService) IsEmailUsed(ctx context.Context, email string) bool {
-	_, err := u.userRepo.GetUserByEmail(ctx, email)
+	_, err := u.userRepo.GetByEmail(ctx, email)
 	if err != nil {
 		return true
 	}
@@ -86,6 +94,5 @@ func (u *userService) IsEmailUsed(ctx context.Context, email string) bool {
 }
 
 func (u *userService) GetAllUsers(ctx context.Context) ([]models.User, error) {
-	return u.userRepo.GetAllUsers(ctx)
-	// return user, err
+	return u.userRepo.GetAll(ctx)
 }
